@@ -73,7 +73,10 @@ function App() {
           <button className="mobile-menu-btn" onClick={()=>setMobileOpen(true)}><Menu/></button>
           <Link to="/" className="brand">
             <div className="brand-mark"><HeartHandshake size={25}/></div>
-            <div><b>Reuse & Reshare</b><small>Campus Community</small></div>
+           <div className="brand-text">
+  <b>Reuse & Reshare</b>
+  <small>NSS College of Engineering, Palakkad</small>
+</div>
           </Link>
           <div className="top-actions">
             {session && <Link to="/notifications" className="notification-top"><Bell size={21}/><UnreadDot/></Link>}
