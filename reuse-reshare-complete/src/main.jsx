@@ -212,6 +212,7 @@ function Browse({profile}){
   const [q,setQ]=useState("");
   const [cat,setCat]=useState("All");
   const [selected,setSelected]=useState(null);
+  const [selectedOwner,setSelectedOwner]=useState(null);
   const [busy,setBusy]=useState(false);
 
   async function load(){
@@ -232,6 +233,21 @@ function Browse({profile}){
   useEffect(()=>{
     load();
   },[]);
+
+  async function openItem(item){
+    setSelected(item);
+    setSelectedOwner(null);
+
+    const {data,error}=await supabase
+      .rpc("get_item_owner_profile",{owner_uuid:item.owner_id});
+
+    if(error){
+      console.error("Could not load item owner profile:",error);
+      return;
+    }
+
+    setSelectedOwner(Array.isArray(data) ? (data[0] || null) : data);
+  }
 
   const filtered=useMemo(
     ()=>items.filter(x=>
@@ -310,6 +326,7 @@ function Browse({profile}){
     }
 
     setSelected(null);
+    setSelectedOwner(null);
     await load();
     alert("Item deleted successfully.");
   }
@@ -438,7 +455,7 @@ function Browse({profile}){
           <ItemCard
             key={item.id}
             item={item}
-            open={()=>setSelected(item)}
+            open={()=>openItem(item)}
           />
         ))}
       </div>
@@ -488,7 +505,13 @@ function Browse({profile}){
                 )}
                 <span>
                   <UserCircle/>
-                  Posted by user ID: {selected.owner_id}
+                  <span>
+                    <b>Posted by:</b>{" "}
+                    {selectedOwner?.name || "Unknown User"}
+                    {selectedOwner?.department && (
+                      <> · {selectedOwner.department}</>
+                    )}
+                  </span>
                 </span>
               </div>
 
