@@ -4,7 +4,7 @@ import {
   BrowserRouter, Routes, Route, Link, NavLink, useNavigate, useLocation
 } from "react-router-dom";
 import {
- Menu, X, Bell, UserCircle, Home as HomeIcon, Search, PlusCircle, AlertTriangle,
+  Menu, X, Bell, UserCircle, Home as HomeIcon, Search, PlusCircle, AlertTriangle,
   Flag, MessageSquare, ShieldCheck, LogOut, HeartHandshake, Settings,
   PackageSearch, ClipboardList, CheckCircle2, XCircle, Trash2, Users,
   ChevronRight, MapPin, CalendarDays, Phone, RefreshCw
@@ -73,10 +73,7 @@ function App() {
           <button className="mobile-menu-btn" onClick={()=>setMobileOpen(true)}><Menu/></button>
           <Link to="/" className="brand">
             <div className="brand-mark"><HeartHandshake size={25}/></div>
-           <div className="brand-text">
-  <b>Reuse & Reshare</b>
-  <small>NSS College of Engineering, Palakkad</small>
-</div>
+            <div className="brand-text"><b>Reuse & Reshare</b><small>NSS College of Engineering, Palakkad</small></div>
           </Link>
           <div className="top-actions">
             {session && <Link to="/notifications" className="notification-top"><Bell size={21}/><UnreadDot/></Link>}
@@ -91,7 +88,7 @@ function App() {
           <main className="main"><Routes>
             <Route path="/" element={<Home session={session} profile={profile}/>}/>
             <Route path="/login" element={<Login session={session} onProfile={loadProfile}/>}/>
-            <Route path="/browse" element={<Guard session={session}><Browse/></Guard>}/>
+            <Route path="/browse" element={<Guard session={session}><Browse profile={profile}/></Guard>}/>
             <Route path="/post" element={<Guard session={session}><Post profile={profile}/></Guard>}/>
             <Route path="/emergency" element={<Guard session={session}><Emergency/></Guard>}/>
             <Route path="/notifications" element={<Guard session={session}><Notifications/></Guard>}/>
@@ -110,7 +107,7 @@ function App() {
 
 function Sidebar({open,close,session,profile,logout}) {
   const links = [
-   ["/","Home",HomeIcon],["/browse","Find Item",Search],
+    ["/","Home",HomeIcon],["/browse","Find Item",Search],["/post","Post Item",PlusCircle],
     ["/emergency","Emergency Items",AlertTriangle],["/notifications","Notifications",Bell],
     ["/requests","My Requests",ClipboardList],["/report","Raise a Flag",Flag],["/feedback","Feedback",MessageSquare]
   ];
@@ -202,47 +199,242 @@ function Login({session,onProfile}) {
   </div></div>
 }
 
-function Browse(){
-  const [items,setItems]=useState([]); const [q,setQ]=useState(""); const [cat,setCat]=useState("All"); const [selected,setSelected]=useState(null);
-  async function load(){const {data,error}=await supabase.from("items").select("*").eq("status","active").order("created_at",{ascending:false});if(error) alert(error.message);setItems(data||[])}
-  useEffect(()=>{load()},[]);
-  const filtered=useMemo(()=>items.filter(x=>(cat==="All"||x.category===cat)&&((x.item_name+" "+x.description).toLowerCase().includes(q.toLowerCase()))),[items,q,cat]);
-  async function request(item){
-  const {data:{user}}=await supabase.auth.getUser();
+function Browse({profile}){
+  const [items,setItems]=useState([]);
+  const [q,setQ]=useState("");
+  const [cat,setCat]=useState("All");
+  const [selected,setSelected]=useState(null);
+  const [busy,setBusy]=useState(false);
 
-  if(!user){
-    alert("Please sign in again.");
-    return;
-  }
+  async function load(){
+    const {data,error}=await supabase
+      .from("items")
+      .select("*")
+      .eq("status","active")
+      .order("created_at",{ascending:false});
 
-  const {error}=await supabase
-    .from("item_requests")
-    .insert({
-      item_id:item.id,
-      requester_id:user.id,
-      message:"I am interested in this item."
-    });
-
-  if(error){
-    if(error.code==="23505"){
-      alert("You have already requested this item.");
-    }else{
+    if(error){
       alert(error.message);
+      return;
     }
-    return;
+
+    setItems(data||[]);
   }
 
-  alert("Request sent. The owner will receive a notification.");
-  setSelected(null);
+  useEffect(()=>{
+    load();
+  },[]);
+
+  const filtered=useMemo(
+    ()=>items.filter(x=>
+      (cat==="All"||x.category===cat) &&
+      ((x.item_name+" "+x.description).toLowerCase().includes(q.toLowerCase()))
+    ),
+    [items,q,cat]
+  );
+
+  async function request(item){
+    const {data:{user},error:userError}=await supabase.auth.getUser();
+
+    if(userError || !user){
+      alert("Please sign in again.");
+      return;
+    }
+
+    if(item.owner_id===user.id){
+      alert("You cannot request your own item.");
+      return;
+    }
+
+    const {error}=await supabase
+      .from("item_requests")
+      .insert({
+        item_id:item.id,
+        requester_id:user.id,
+        message:"I am interested in this item."
+      });
+
+    if(error){
+      if(error.code==="23505"){
+        alert("You have already requested this item.");
+      }else{
+        alert(error.message);
+      }
+      return;
+    }
+
+    alert("Request sent. The owner will receive a notification.");
+    setSelected(null);
+  }
+
+  async function deleteItem(item){
+    const {data:{user},error:userError}=await supabase.auth.getUser();
+
+    if(userError || !user){
+      alert("Please sign in again.");
+      return;
+    }
+
+    const isOwner=item.owner_id===user.id;
+    const isAdmin=profile?.role==="admin";
+
+    if(!isOwner && !isAdmin){
+      alert("You are not allowed to delete this item.");
+      return;
+    }
+
+    if(!window.confirm(`Delete "${item.item_name}"? This action cannot be undone.`)){
+      return;
+    }
+
+    setBusy(true);
+
+    const {error}=await supabase
+      .from("items")
+      .delete()
+      .eq("id",item.id);
+
+    setBusy(false);
+
+    if(error){
+      alert("Could not delete item: " + error.message);
+      return;
+    }
+
+    setSelected(null);
+    await load();
+    alert("Item deleted successfully.");
+  }
+
+  return (
+    <div className="page">
+      <SectionTitle
+        eyebrow="CAMPUS MARKETPLACE"
+        title="Find an Item"
+        text="Search what you need and request it from the owner."
+      />
+
+      <div className="toolbar">
+        <div className="search-input">
+          <Search/>
+          <input
+            value={q}
+            onChange={e=>setQ(e.target.value)}
+            placeholder="Search books, tools, electronics..."
+          />
+        </div>
+
+        <button className="refresh" onClick={load}>
+          <RefreshCw size={18}/>
+          Refresh
+        </button>
+      </div>
+
+      <div className="chips">
+        <button
+          className={cat==="All"?"chip active":"chip"}
+          onClick={()=>setCat("All")}
+        >
+          All
+        </button>
+
+        {CATEGORIES.map(c=>(
+          <button
+            key={c}
+            className={cat===c?"chip active":"chip"}
+            onClick={()=>setCat(c)}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+
+      <div className="item-grid">
+        {filtered.map(item=>(
+          <ItemCard
+            key={item.id}
+            item={item}
+            open={()=>setSelected(item)}
+          />
+        ))}
+      </div>
+
+      {!filtered.length && (
+        <Empty
+          icon={<PackageSearch/>}
+          title="No items found"
+          text="Try a different search or category."
+        />
+      )}
+
+      {selected && (
+        <Modal close={()=>setSelected(null)}>
+          <div className="modal-item">
+            {selected.image_url ? (
+              <img src={selected.image_url} alt={selected.item_name}/>
+            ) : (
+              <div className="modal-image">♻</div>
+            )}
+
+            <div>
+              <span className="tag">{selected.category}</span>
+              <h2>{selected.item_name}</h2>
+              <p>{selected.description}</p>
+
+              <div className="detail-list">
+                <span><HeartHandshake/> {selected.type}</span>
+                <span><MapPin/> {selected.location}</span>
+                {selected.meeting_date && (
+                  <span>
+                    <CalendarDays/>
+                    {selected.meeting_date}
+                    {selected.meeting_time ? ` ${selected.meeting_time}` : ""}
+                  </span>
+                )}
+                {selected.contact_phone && (
+                  <span>
+                    <Phone/>
+                    <a
+                      href={`tel:${selected.contact_phone}`}
+                      onClick={e=>e.stopPropagation()}
+                    >
+                      {selected.contact_phone}
+                    </a>
+                  </span>
+                )}
+              </div>
+
+              <div className="modal-actions">
+                {profile?.role!=="admin" && (
+                  <button
+                    className="btn primary full"
+                    onClick={()=>request(selected)}
+                    disabled={busy}
+                  >
+                    Request this item
+                  </button>
+                )}
+
+                {(profile?.role==="admin" ||
+                  selected.owner_id===profile?.id) && (
+                  <button
+                    className="btn reject full"
+                    onClick={()=>deleteItem(selected)}
+                    disabled={busy}
+                  >
+                    <Trash2 size={18}/>
+                    {busy ? "Deleting..." : "Delete Item"}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
 }
-  return <div className="page"><SectionTitle eyebrow="CAMPUS MARKETPLACE" title="Find an Item" text="Search what you need and request it from the owner."/>
-    <div className="toolbar"><div className="search-input"><Search/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search books, tools, electronics..."/></div><button className="refresh" onClick={load}><RefreshCw size={18}/> Refresh</button></div>
-    <div className="chips"><button className={cat==="All"?"chip active":"chip"} onClick={()=>setCat("All")}>All</button>{CATEGORIES.map(c=><button key={c} className={cat===c?"chip active":"chip"} onClick={()=>setCat(c)}>{c}</button>)}</div>
-    <div className="item-grid">{filtered.map(item=><ItemCard key={item.id} item={item} open={()=>setSelected(item)}/>)}</div>
-    {!filtered.length && <Empty icon={<PackageSearch/>} title="No items found" text="Try a different search or category."/>}
-    {selected && <Modal close={()=>setSelected(null)}><div className="modal-item">{selected.image_url?<img src={selected.image_url} alt=""/>:<div className="modal-image">♻</div>}<div><span className="tag">{selected.category}</span><h2>{selected.item_name}</h2><p>{selected.description}</p><div className="detail-list"><span><HeartHandshake/> {selected.type}</span><span><MapPin/> {selected.location}</span>{selected.meeting_date&&<span><CalendarDays/> {selected.meeting_date} {selected.meeting_time||""}</span>}</div><button className="btn primary full" onClick={()=>request(selected)}>Request this item</button></div></div></Modal>}
-  </div>
-}
+
 function ItemCard({item,open}){return <article className="item-card">{item.image_url?<img src={item.image_url} alt={item.item_name}/>:<div className="item-placeholder"><PackageSearch size={42}/></div>}<div className="item-body"><span className="tag">{item.category}</span><h3>{item.item_name}</h3><p>{item.description}</p><div className="item-info"><span>{item.type}</span><span><MapPin size={14}/> {item.location}</span></div><button className="btn outline full" onClick={open}>View & Request</button></div></article>}
 
 function Post({profile}){
@@ -259,26 +451,7 @@ function Post({profile}){
     <Field label="Description"><textarea value={f.description} onChange={e=>set("description",e.target.value)} required rows="5" placeholder="Condition, size, important details..."/></Field>
     <Field label="Type"><select value={f.type} onChange={e=>set("type",e.target.value)}><option>Free/Give away</option><option>Borrow</option><option>Exchange</option><option>Sell</option></select></Field>
     <div className="two"><Field label="Meeting Date"><input type="date" value={f.meeting_date} onChange={e=>set("meeting_date",e.target.value)}/></Field><Field label="Meeting Time"><input type="time" value={f.meeting_time} onChange={e=>set("meeting_time",e.target.value)}/></Field></div>
-   <Field label="Campus Location">
-  <select
-    value={LOCATIONS.includes(f.location) ? f.location : "Custom Location"}
-    onChange={e => set("location", e.target.value === "Custom Location" ? "" : e.target.value)}
-  >
-    {LOCATIONS.map(x => <option key={x}>{x}</option>)}
-    <option>Custom Location</option>
-  </select>
-</Field>
-
-{!LOCATIONS.includes(f.location) && (
-  <Field label="Enter Custom Location">
-    <input
-      value={f.location}
-      onChange={e => set("location", e.target.value)}
-      required
-      placeholder="Example: Near Mechanical Workshop Gate"
-    />
-  </Field>
-)}
+    <Field label="Campus Location"><select value={f.location} onChange={e=>set("location",e.target.value)}>{LOCATIONS.map(x=><option key={x}>{x}</option>)}</select></Field>
     <Field label="Contact Phone"><input value={f.contact_phone} onChange={e=>set("contact_phone",e.target.value)} required placeholder="Phone number"/></Field>
     {msg&&<div className="message">{msg}</div>}<button className="btn primary full" disabled={busy}>{busy?"Posting...":"Post Item"}</button>
   </form></div>
@@ -297,21 +470,227 @@ function Emergency(){
 
 function Notifications(){
   const [list,setList]=useState([]);
-  async function load(){const {data}=await supabase.from("notifications").select("*").order("created_at",{ascending:false});setList(data||[])}
-  useEffect(()=>{load()},[]);
-  async function read(id){await supabase.from("notifications").update({is_read:true}).eq("id",id);load()}
-  return <div className="page"><SectionTitle eyebrow="STAY UPDATED" title="Notifications" text="Requests, decisions and important account updates."/><div className="notification-list">{list.map(n=><button key={n.id} onClick={()=>read(n.id)} className={"notification-card "+(!n.is_read?"unread":"")}><div className="notice-icon"><Bell/></div><div><b>{n.title}</b><p>{n.message}</p><small>{new Date(n.created_at).toLocaleString()}</small></div></button>)}</div>{!list.length&&<Empty icon={<Bell/>} title="You're all caught up" text="New notifications will appear here."/>}</div>
+
+  async function load(){
+    const {data:{user},error:userError}=await supabase.auth.getUser();
+
+    if(userError || !user){
+      setList([]);
+      return;
+    }
+
+    const {data,error}=await supabase
+      .from("notifications")
+      .select("*")
+      .eq("user_id",user.id)
+      .order("created_at",{ascending:false});
+
+    if(error){
+      console.error("Notification load error:",error);
+      setList([]);
+      return;
+    }
+
+    setList(data||[]);
+  }
+
+  useEffect(()=>{
+    load();
+  },[]);
+
+  async function read(id){
+    const {data:{user}}=await supabase.auth.getUser();
+
+    if(!user){
+      return;
+    }
+
+    const {error}=await supabase
+      .from("notifications")
+      .update({is_read:true})
+      .eq("id",id)
+      .eq("user_id",user.id);
+
+    if(error){
+      console.error("Notification read error:",error);
+      return;
+    }
+
+    load();
+  }
+
+  return (
+    <div className="page">
+      <SectionTitle
+        eyebrow="STAY UPDATED"
+        title="Notifications"
+        text="Requests, decisions and important account updates."
+      />
+
+      <div className="notification-list">
+        {list.map(n=>(
+          <button
+            key={n.id}
+            onClick={()=>read(n.id)}
+            className={"notification-card "+(!n.is_read?"unread":"")}
+          >
+            <div className="notice-icon"><Bell/></div>
+            <div>
+              <b>{n.title || "Notification"}</b>
+              <p>{n.message}</p>
+              <small>{new Date(n.created_at).toLocaleString()}</small>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {!list.length && (
+        <Empty
+          icon={<Bell/>}
+          title="You're all caught up"
+          text="New notifications will appear here."
+        />
+      )}
+    </div>
+  );
 }
 
 function Requests(){
-  const [incoming,setIncoming]=useState([]);const [mine,setMine]=useState([]);
-  async function load(){const {data:{user}}=await supabase.auth.getUser();const {data:i}=await supabase.from("item_requests").select("*, items!inner(item_name,owner_id)").eq("items.owner_id",user.id).order("created_at",{ascending:false});const {data:m}=await supabase.from("item_requests").select("*, items(item_name)").eq("requester_id",user.id).order("created_at",{ascending:false});setIncoming(i||[]);setMine(m||[])}
-  useEffect(()=>{load()},[]);
-  async function decide(id,status){const {error}=await supabase.from("item_requests").update({status}).eq("id",id);if(error)alert(error.message);else load()}
-  return <div className="page"><SectionTitle eyebrow="YOUR ACTIVITY" title="Requests" text="Manage requests for your items and see the requests you have made."/>
-    <div className="request-section"><h2>Requests for my items</h2>{incoming.map(r=><div className="request-card" key={r.id}><div><b>{r.items?.item_name}</b><p>{r.message||"No message."}</p><span className={"status "+r.status}>{r.status}</span></div>{r.status==="pending"&&<div className="request-actions"><button className="btn accept" onClick={()=>decide(r.id,"accepted")}><CheckCircle2/> Accept</button><button className="btn reject" onClick={()=>decide(r.id,"rejected")}><XCircle/> Reject</button></div>}</div>)}{!incoming.length&&<p className="muted">No incoming requests yet.</p>}</div>
-    <div className="request-section"><h2>My requests</h2>{mine.map(r=><div className="request-card" key={r.id}><div><b>{r.items?.item_name}</b><p>Your request status</p><span className={"status "+r.status}>{r.status}</span></div></div>)}{!mine.length&&<p className="muted">You haven't requested anything yet.</p>}</div>
-  </div>
+  const [incoming,setIncoming]=useState([]);
+  const [mine,setMine]=useState([]);
+
+  async function load(){
+    const {data:{user},error:userError}=await supabase.auth.getUser();
+
+    if(userError || !user){
+      setIncoming([]);
+      setMine([]);
+      return;
+    }
+
+    const {data:myItems,error:itemsError}=await supabase
+      .from("items")
+      .select("id,item_name,owner_id")
+      .eq("owner_id",user.id);
+
+    if(itemsError){
+      console.error("Could not load your items:",itemsError);
+      setIncoming([]);
+    }else{
+      const ids=(myItems||[]).map(x=>x.id);
+
+      if(ids.length){
+        const {data:i,error:iError}=await supabase
+          .from("item_requests")
+          .select("*, items(item_name,owner_id)")
+          .in("item_id",ids)
+          .order("created_at",{ascending:false});
+
+        if(iError){
+          console.error("Could not load incoming requests:",iError);
+          setIncoming([]);
+        }else{
+          setIncoming(i||[]);
+        }
+      }else{
+        setIncoming([]);
+      }
+    }
+
+    const {data:m,error:mError}=await supabase
+      .from("item_requests")
+      .select("*, items(item_name)")
+      .eq("requester_id",user.id)
+      .order("created_at",{ascending:false});
+
+    if(mError){
+      console.error("Could not load your requests:",mError);
+      setMine([]);
+    }else{
+      setMine(m||[]);
+    }
+  }
+
+  useEffect(()=>{
+    load();
+  },[]);
+
+  async function decide(id,status){
+    const {error}=await supabase
+      .from("item_requests")
+      .update({status})
+      .eq("id",id);
+
+    if(error){
+      alert(error.message);
+      return;
+    }
+
+    load();
+  }
+
+  return (
+    <div className="page">
+      <SectionTitle
+        eyebrow="YOUR ACTIVITY"
+        title="Requests"
+        text="Manage requests for your items and see the requests you have made."
+      />
+
+      <div className="request-section">
+        <h2>Requests for my items</h2>
+
+        {incoming.map(r=>(
+          <div className="request-card" key={r.id}>
+            <div>
+              <b>{r.items?.item_name}</b>
+              <p>{r.message||"No message."}</p>
+              <span className={"status "+r.status}>{r.status}</span>
+            </div>
+
+            {r.status==="pending" && (
+              <div className="request-actions">
+                <button
+                  className="btn accept"
+                  onClick={()=>decide(r.id,"accepted")}
+                >
+                  <CheckCircle2/> Accept
+                </button>
+                <button
+                  className="btn reject"
+                  onClick={()=>decide(r.id,"rejected")}
+                >
+                  <XCircle/> Reject
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {!incoming.length && (
+          <p className="muted">No incoming requests yet.</p>
+        )}
+      </div>
+
+      <div className="request-section">
+        <h2>My requests</h2>
+
+        {mine.map(r=>(
+          <div className="request-card" key={r.id}>
+            <div>
+              <b>{r.items?.item_name}</b>
+              <p>Your request status</p>
+              <span className={"status "+r.status}>{r.status}</span>
+            </div>
+          </div>
+        ))}
+
+        {!mine.length && (
+          <p className="muted">You haven't requested anything yet.</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function Report(){
@@ -338,72 +717,87 @@ function Account({profile,refresh}){
     setBusy(true);
     setMsg("");
 
-    const {data:{user}}=await supabase.auth.getUser();
+    try{
+      const {data:{user},error:userError}=await supabase.auth.getUser();
 
-    if(!user){
-      setMsg("Please sign in again.");
+      if(userError || !user){
+        setMsg("Please sign in again.");
+        return;
+      }
+
+      let avatar_url=profile?.avatar_url||null;
+      const file=document.getElementById("profile-photo-input")?.files?.[0];
+
+      if(file){
+        if(file.size>5*1024*1024){
+          setMsg("Profile photo must be 5 MB or smaller.");
+          return;
+        }
+
+        const ext=file.name.split(".").pop().toLowerCase();
+
+        if(!["jpg","jpeg","png","webp"].includes(ext)){
+          setMsg("Use JPG, JPEG, PNG or WEBP.");
+          return;
+        }
+
+        const path=`${user.id}/profile-${crypto.randomUUID()}.${ext}`;
+
+        const {error:uploadError}=await supabase
+          .storage
+          .from("profile-photos")
+          .upload(path,file,{upsert:false,contentType:file.type});
+
+        if(uploadError){
+          setMsg("Photo upload failed: " + uploadError.message);
+          return;
+        }
+
+        avatar_url=supabase
+          .storage
+          .from("profile-photos")
+          .getPublicUrl(path)
+          .data
+          .publicUrl;
+      }
+
+      const {error:profileError}=await supabase
+        .from("profiles")
+        .upsert(
+          {
+            id:user.id,
+            email:user.email,
+            name:name.trim(),
+            phone:phone.trim(),
+            department:dept.trim(),
+            avatar_url
+          },
+          {onConflict:"id"}
+        );
+
+      if(profileError){
+        setMsg("Profile save failed: " + profileError.message);
+        return;
+      }
+
+      if(refresh){
+        await refresh();
+      }
+
+      setPhoto(avatar_url||"");
+      setMsg("Account details saved successfully.");
+
+      const input=document.getElementById("profile-photo-input");
+      if(input){
+        input.value="";
+      }
+
+    }catch(error){
+      console.error("Account save error:",error);
+      setMsg("Something went wrong: " + (error?.message || "Unknown error"));
+    }finally{
       setBusy(false);
-      return;
     }
-
-    let avatar_url=photo;
-
-    const file=document.getElementById("profile-photo-input")?.files?.[0];
-
-    if(file){
-      if(file.size>5*1024*1024){
-        setMsg("Profile photo must be 5 MB or smaller.");
-        setBusy(false);
-        return;
-      }
-
-      const ext=file.name.split(".").pop().toLowerCase();
-
-      if(!["jpg","jpeg","png","webp"].includes(ext)){
-        setMsg("Use JPG, JPEG, PNG or WEBP.");
-        setBusy(false);
-        return;
-      }
-
-      const path=`${user.id}/profile.${ext}`;
-
-      const {error:uploadError}=await supabase
-        .storage
-        .from("profile-photos")
-        .upload(path,file,{upsert:true});
-
-      if(uploadError){
-        setMsg(uploadError.message);
-        setBusy(false);
-        return;
-      }
-
-      avatar_url=supabase
-        .storage
-        .from("profile-photos")
-        .getPublicUrl(path)
-        .data
-        .publicUrl;
-    }
-
-    const {error}=await supabase
-      .from("profiles")
-      .update({
-        name,
-        phone,
-        department:dept,
-        avatar_url
-      })
-      .eq("id",user.id);
-
-    setMsg(error?error.message:"Account details saved successfully.");
-
-    if(!error){
-      setPhoto(avatar_url);
-      await refresh();
-    }
-
-    setBusy(false);
   }
 
   async function reset(){
@@ -419,16 +813,11 @@ function Account({profile,refresh}){
       {redirectTo:window.location.origin+"/account"}
     );
 
-    setMsg(
-      error
-        ? error.message
-        : "Password reset email sent."
-    );
+    setMsg(error ? error.message : "Password reset email sent.");
   }
 
   return (
     <div className="page narrow">
-
       <SectionTitle
         eyebrow="YOUR PROFILE"
         title="My Account"
@@ -436,134 +825,86 @@ function Account({profile,refresh}){
       />
 
       <div className="account-card">
-
         <div className="profile-photo-section">
+          {photo ? (
+            <img src={photo} alt="Profile" className="profile-photo"/>
+          ) : (
+            <div className="profile-photo-placeholder">
+              <UserCircle size={70}/>
+            </div>
+          )}
 
-  {photo ? (
-    <img
-      src={photo}
-      alt="Profile"
-      className="profile-photo"
-    />
-  ) : (
-    <div className="profile-photo-placeholder">
-      <UserCircle size={70}/>
-    </div>
-  )}
+          <label className="btn outline profile-upload">
+            <UserCircle size={18}/>
+            Choose Profile Photo
+            <input
+              id="profile-photo-input"
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp"
+              hidden
+              onChange={e=>{
+                const file=e.target.files?.[0];
+                if(!file) return;
 
-  <label className="btn outline profile-upload">
-    <UserCircle size={18}/>
-    Choose Profile Photo
+                if(file.size>5*1024*1024){
+                  setMsg("Profile photo must be 5 MB or smaller.");
+                  e.target.value="";
+                  return;
+                }
 
-    <input
-      id="profile-photo-input"
-      type="file"
-      accept=".jpg,.jpeg,.png,.webp"
-      hidden
-      onChange={e => {
-        const file = e.target.files?.[0];
+                const ext=file.name.split(".").pop().toLowerCase();
+                if(!["jpg","jpeg","png","webp"].includes(ext)){
+                  setMsg("Use JPG, JPEG, PNG or WEBP.");
+                  e.target.value="";
+                  return;
+                }
 
-        if (file) {
-          const previewUrl = URL.createObjectURL(file);
-          setPhoto(previewUrl);
-          setMsg(`Selected: ${file.name}`);
-        }
-      }}
-    />
-  </label>
+                const previewUrl=URL.createObjectURL(file);
+                setPhoto(previewUrl);
+                setMsg(`Selected: ${file.name}`);
+              }}
+            />
+          </label>
 
-  <small>JPG, PNG or WEBP • Maximum 5 MB</small>
-
-</div>
+          <small>JPG, PNG or WEBP • Maximum 5 MB</small>
+        </div>
 
         <span className="role-badge">
-          {profile?.role==="admin"
-            ? "Administrator"
-            : profile?.role==="faculty"
-            ? "Faculty"
-            : "Student"}
+          {profile?.role==="admin" ? "Administrator" : profile?.role==="faculty" ? "Faculty" : "Student"}
         </span>
 
         <Field label="Name">
-          <input
-            value={name}
-            onChange={e=>setName(e.target.value)}
-            placeholder="Your name"
-          />
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="Your name"/>
         </Field>
 
         <Field label="Registered Email">
-          <input
-            value={profile?.email||""}
-            disabled
-          />
+          <input value={profile?.email||""} disabled/>
         </Field>
 
         <Field label="Phone Number">
-          <input
-            value={phone}
-            onChange={e=>setPhone(e.target.value)}
-            placeholder="Your phone number"
-          />
+          <input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="Your phone number"/>
         </Field>
 
         <Field label="Department">
-          <input
-            value={dept}
-            onChange={e=>setDept(e.target.value)}
-            placeholder="Example: Mechanical Engineering"
-          />
+          <input value={dept} onChange={e=>setDept(e.target.value)} placeholder="Example: Mechanical Engineering"/>
         </Field>
 
         <div className="account-info">
-          <div>
-            <span>Account Type</span>
-            <b>
-              {profile?.role==="admin"
-                ? "Administrator"
-                : profile?.role==="faculty"
-                ? "Faculty"
-                : "Student"}
-            </b>
-          </div>
-
-          <div>
-            <span>Login Email</span>
-            <b>{profile?.email||"Not available"}</b>
-          </div>
-
-          <div>
-            <span>Phone</span>
-            <b>{phone||"Not added"}</b>
-          </div>
-
-          <div>
-            <span>Department</span>
-            <b>{dept||"Not added"}</b>
-          </div>
+          <div><span>Account Type</span><b>{profile?.role==="admin" ? "Administrator" : profile?.role==="faculty" ? "Faculty" : "Student"}</b></div>
+          <div><span>Login Email</span><b>{profile?.email||"Not available"}</b></div>
+          <div><span>Phone</span><b>{phone||"Not added"}</b></div>
+          <div><span>Department</span><b>{dept||"Not added"}</b></div>
         </div>
 
-        {msg && (
-          <div className="message">
-            {msg}
-          </div>
-        )}
+        {msg && <div className="message">{msg}</div>}
 
-        <button
-          className="btn primary full"
-          onClick={save}
-          disabled={busy}
-        >
+        <button className="btn primary full" onClick={save} disabled={busy}>
           {busy ? "Saving..." : "Save Account Details"}
         </button>
 
-        <button
-          className="btn outline full"
-          onClick={reset}
-        >
+        <button className="btn outline full" onClick={reset} disabled={busy}>
           Send Password Reset Email
         </button>
-
       </div>
     </div>
   );
