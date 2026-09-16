@@ -207,7 +207,34 @@ function Browse(){
   async function load(){const {data,error}=await supabase.from("items").select("*").eq("status","active").order("created_at",{ascending:false});if(error) alert(error.message);setItems(data||[])}
   useEffect(()=>{load()},[]);
   const filtered=useMemo(()=>items.filter(x=>(cat==="All"||x.category===cat)&&((x.item_name+" "+x.description).toLowerCase().includes(q.toLowerCase()))),[items,q,cat]);
-  async function request(item){const {data:{user}}=await supabase.auth.getUser();const {error}=await supabase.from("item_requests").insert({item_id:item.id,requester_id:user.id,message:"I am interested in this item."});alert(error?error.message:"Request sent. The owner will receive a notification.");if(!error)setSelected(null)}
+  async function request(item){
+  const {data:{user}}=await supabase.auth.getUser();
+
+  if(!user){
+    alert("Please sign in again.");
+    return;
+  }
+
+  const {error}=await supabase
+    .from("item_requests")
+    .insert({
+      item_id:item.id,
+      requester_id:user.id,
+      message:"I am interested in this item."
+    });
+
+  if(error){
+    if(error.code==="23505"){
+      alert("You have already requested this item.");
+    }else{
+      alert(error.message);
+    }
+    return;
+  }
+
+  alert("Request sent. The owner will receive a notification.");
+  setSelected(null);
+}
   return <div className="page"><SectionTitle eyebrow="CAMPUS MARKETPLACE" title="Find an Item" text="Search what you need and request it from the owner."/>
     <div className="toolbar"><div className="search-input"><Search/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search books, tools, electronics..."/></div><button className="refresh" onClick={load}><RefreshCw size={18}/> Refresh</button></div>
     <div className="chips"><button className={cat==="All"?"chip active":"chip"} onClick={()=>setCat("All")}>All</button>{CATEGORIES.map(c=><button key={c} className={cat===c?"chip active":"chip"} onClick={()=>setCat(c)}>{c}</button>)}</div>
