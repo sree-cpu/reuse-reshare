@@ -38,6 +38,14 @@ function App() {
     if (!supabase || !user) { setProfile(null); return; }
     const {data,error} = await supabase.from("profiles").select("*").eq("id",user.id).maybeSingle();
     if (error) console.error(error);
+
+    if (data?.status === "suspended") {
+      alert("Your account has been suspended by the administrator.");
+      await supabase.auth.signOut();
+      setProfile(null);
+      return;
+    }
+
     setProfile(data || null);
   }
 
@@ -306,6 +314,82 @@ function Browse({profile}){
     alert("Item deleted successfully.");
   }
 
+  async function reportItem(item){
+    const {data:{user},error:userError}=await supabase.auth.getUser();
+
+    if(userError || !user){
+      alert("Please sign in again.");
+      return;
+    }
+
+    if(item.owner_id===user.id){
+      alert("You cannot report your own item.");
+      return;
+    }
+
+    const reason=window.prompt(
+      "Why are you reporting this item?\n\nExample: Scam / Fraud, Stolen Property, Prohibited Item"
+    );
+
+    if(!reason || !reason.trim()){
+      return;
+    }
+
+    const details=window.prompt(
+      "Please describe the issue:"
+    );
+
+    if(!details || !details.trim()){
+      return;
+    }
+
+    const {error}=await supabase
+      .from("flags")
+      .insert({
+        reporter_id:user.id,
+        item_id:item.id,
+        reported_user_id:item.owner_id,
+        category:reason.trim(),
+        description:details.trim()
+      });
+
+    if(error){
+      alert("Could not submit report: " + error.message);
+      return;
+    }
+
+    alert("Report submitted successfully. The administrator will review it.");
+  }
+
+  async function suspendUser(userId){
+    if(profile?.role!=="admin"){
+      alert("Only an administrator can suspend a user.");
+      return;
+    }
+
+    if(!userId){
+      return;
+    }
+
+    if(!window.confirm(
+      "Suspend this user? They will be signed out when their account is checked again."
+    )){
+      return;
+    }
+
+    const {error}=await supabase
+      .from("profiles")
+      .update({status:"suspended"})
+      .eq("id",userId);
+
+    if(error){
+      alert("Could not suspend user: " + error.message);
+      return;
+    }
+
+    alert("User suspended successfully.");
+  }
+
   return (
     <div className="page">
       <SectionTitle
@@ -402,18 +486,34 @@ function Browse({profile}){
                     </a>
                   </span>
                 )}
+                <span>
+                  <UserCircle/>
+                  Posted by user ID: {selected.owner_id}
+                </span>
               </div>
 
               <div className="modal-actions">
-                {profile?.role!=="admin" && (
-                  <button
-                    className="btn primary full"
-                    onClick={()=>request(selected)}
-                    disabled={busy}
-                  >
-                    Request this item
-                  </button>
-                )}
+                {profile?.role!=="admin" &&
+                  selected.owner_id!==profile?.id && (
+                    <button
+                      className="btn primary full"
+                      onClick={()=>request(selected)}
+                      disabled={busy}
+                    >
+                      Request this item
+                    </button>
+                  )}
+
+                {selected.owner_id!==profile?.id &&
+                  profile?.role!=="admin" && (
+                    <button
+                      className="btn outline full"
+                      onClick={()=>reportItem(selected)}
+                    >
+                      <Flag size={18}/>
+                      Report This Post
+                    </button>
+                  )}
 
                 {(profile?.role==="admin" ||
                   selected.owner_id===profile?.id) && (
@@ -424,6 +524,17 @@ function Browse({profile}){
                   >
                     <Trash2 size={18}/>
                     {busy ? "Deleting..." : "Delete Item"}
+                  </button>
+                )}
+
+                {profile?.role==="admin" && (
+                  <button
+                    className="btn reject full"
+                    onClick={()=>suspendUser(selected.owner_id)}
+                    disabled={busy}
+                  >
+                    <ShieldCheck size={18}/>
+                    Suspend This User
                   </button>
                 )}
               </div>
@@ -918,8 +1029,8 @@ function Admin(){
   async function remove(id){if(!confirm("Remove this post?"))return;await supabase.from("items").update({status:"removed"}).eq("id",id);load()}
   async function suspend(id,status){await supabase.from("profiles").update({status}).eq("id",id);load()}
   return <div className="page"><SectionTitle eyebrow="ADMIN CONTROL CENTER" title="Admin Moderation" text="Review reports, remove posts and manage accounts."/>
-    <AdminSection title="Open / recent flags">{flags.map(f=><div className="admin-row" key={f.id}><div><span className="tag danger">{f.category}</span><p>{f.description}</p><small>Status: {f.status}</small></div><div className="admin-actions">{f.status==="open"&&<><button className="btn accept" onClick={()=>updateFlag(f.id,"resolved")}>Resolve</button><button className="btn outline" onClick={()=>updateFlag(f.id,"dismissed")}>No Action</button></>}</div></div>)}{!flags.length&&<p className="muted">No flags.</p>}</AdminSection>
-    <AdminSection title="Active posts">{items.map(i=><div className="admin-row" key={i.id}><div><b>{i.item_name}</b><p>{i.description}</p></div><button className="btn reject" onClick={()=>remove(i.id)}><Trash2/> Remove</button></div>)}{!items.length&&<p className="muted">No active posts.</p>}</AdminSection>
+    <AdminSection title="Open / recent flags">{flags.map(f=><div className="admin-row" key={f.id}><div><span className="tag danger">{f.category}</span><p>{f.description}</p><small>Report ID: {f.id}</small><br/><small>Reporter ID: {f.reporter_id||"Not available"}</small><br/><small>Reported User ID: {f.reported_user_id||"Not available"}</small><br/><small>Item ID: {f.item_id||"Not available"}</small><br/><small>Status: {f.status}</small></div><div className="admin-actions">{f.status==="open"&&<><button className="btn accept" onClick={()=>updateFlag(f.id,"resolved")}>Resolve</button><button className="btn outline" onClick={()=>updateFlag(f.id,"dismissed")}>No Action</button></>}</div></div>)}{!flags.length&&<p className="muted">No flags.</p>}</AdminSection>
+    <AdminSection title="Active posts">{items.map(i=><div className="admin-row" key={i.id}><div><b>{i.item_name}</b><p>{i.description}</p><small>Item ID: {i.id}</small><br/><small>Owner ID: {i.owner_id}</small></div><button className="btn reject" onClick={()=>remove(i.id)}><Trash2/> Remove</button></div>)}{!items.length&&<p className="muted">No active posts.</p>}</AdminSection>
     <AdminSection title="Accounts">{users.map(u=><div className="admin-row" key={u.id}><div><b>{u.name||"Unnamed"} <span className="role-badge">{u.role}</span></b><p>{u.email} • {u.phone||"No phone"}</p></div>{u.role!=="admin"&&<button className={u.status==="active"?"btn reject":"btn accept"} onClick={()=>suspend(u.id,u.status==="active"?"suspended":"active")}>{u.status==="active"?"Suspend":"Restore"}</button>}</div>)}</AdminSection>
     <AdminSection title="Feedback">{feedback.map(f=><div className="admin-row" key={f.id}><div><b>{"★".repeat(f.rating)}{"☆".repeat(5-f.rating)}</b><p>{f.message}</p></div></div>)}{!feedback.length&&<p className="muted">No feedback yet.</p>}</AdminSection>
   </div>
